@@ -3,10 +3,10 @@
 (require racket/unsafe/ops
          (for-syntax racket/base))
 
-
-
-
 (provide dset?
+         dset-equal?
+         dset-eqv?
+         dset-eq?
          immutable-dset?
          mutable-dset?
          (rename-out [dset* dset]
@@ -32,22 +32,32 @@
          dset-empty?
          dset-count
          dset->list
-         ;dset-union
-         ;dset-union!
-         ;dset-intersect
-         ;dset-intersect!
-         ;; for/dset
-         ;; for/dseteqv
-         ;; for/dseteq
-         ;; for/mutable-dset
-         ;; for/mutable-dseteqv
-         ;; for/mutable-dseteq
-         in-dset
+         dset-union
+         dset-union*
+         dset-union!
+         dset-union*!
+         dset-intersect
+         dset-intersect*
+         dset-intersect!
+         dset-intersect*!
          dset-map
-         dset-for-each)
+         dset-for-each
+         in-dset
+         for/dset
+         for/dseteqv
+         for/dseteq
+         for/mutable-dset
+         for/mutable-dseteqv
+         for/mutable-dseteq
+         for*/dset
+         for*/dseteqv
+         for*/dseteq
+         for*/mutable-dset
+         for*/mutable-dseteqv
+         for*/mutable-dseteq)
 
 (define-syntax-rule (in? elems)
-  (λ (x) (hash-has-key? elems x)))
+  (λ (x) (hash-ref elems x #f)))
 
 (define-syntax-rule (too-fragmented? elems del)
   (> del (arithmetic-shift (hash-count elems) -1)))
@@ -65,13 +75,20 @@
   #:constructor-name do-not-use-me-ever)
 
 ;; NOTE: keep these in sync w/ above def!!!!!!
-(define-syntax-rule (unsafe-dset-elems ds) (unsafe-struct-ref ds 0))
+;(define-syntax-rule (unsafe-dset-elems ds) (unsafe-struct*-ref ds 0))
+(define-syntax-rule (unsafe-dset-elems ds) (dset-elems ds))
 
-(define-syntax-rule (unsafe-dset-del ds)          (unsafe-struct-ref  ds 1))
-(define-syntax-rule (unsafe-set-dset-del! ds val) (unsafe-struct-set! ds 1 val))
+;(define-syntax-rule (unsafe-dset-del ds)          (unsafe-struct*-ref  ds 1))
+(define-syntax-rule (unsafe-dset-del ds)          (dset-del  ds))
 
-(define-syntax-rule (unsafe-dset-seq ds)          (unsafe-struct-ref  ds 2))
-(define-syntax-rule (unsafe-set-dset-seq! ds val) (unsafe-struct-set! ds 2 val))
+;(define-syntax-rule (unsafe-set-dset-del! ds val) (unsafe-struct*-set! ds 1 val))
+(define-syntax-rule (unsafe-set-dset-del! ds val) (set-dset-del! ds val))
+
+;(define-syntax-rule (unsafe-dset-seq ds)          (unsafe-struct*-ref  ds 2))
+(define-syntax-rule (unsafe-dset-seq ds)          (dset-seq  ds))
+
+;(define-syntax-rule (unsafe-set-dset-seq! ds val) (unsafe-struct*-set! ds 2 val))
+(define-syntax-rule (unsafe-set-dset-seq! ds val) (set-dset-seq! ds val))
 
 ;; 
 ;; dset-print
@@ -244,7 +261,7 @@
 ;;
 ;; This automatically inserts a dset? check (or immutable/mutable-dset?)
 ;; and raise-argument-error for failure, as well as pattern matching
-;; out the dset's fields quickly after the check is complete
+;; out the dset's fields if the check passes
 (define-syntax (define/ds stx)
   (syntax-case stx ()
     [(_ (name [(dset-spec elems del seq) ds] . other-args) . body)
@@ -311,17 +328,17 @@
 ;;
 ;; dset-add
 ;;
-(define/ds (dset-add [(idset elems del seq) ds] elem)
+(define/ds (dset-add [(idset elems del _) ds] elem)
   (define prev-count (hash-count elems))
   (let ([elems (hash-set elems elem #t)])
     (if (eqv? prev-count (hash-count elems))
         ds
-        (immutable-dset elems del (cons elem seq)))))
+        (immutable-dset elems del (cons elem (unsafe-dset-seq ds))))))
 
 ;;
 ;; dset-add!
 ;;
-(define/ds (dset-add! [(mdset elems del seq) ds] elem)
+(define/ds (dset-add! [(mdset elems _ seq) ds] elem)
   (define prev-count (hash-count elems))
   (hash-set! elems elem #t)
   (unless (eqv? prev-count (hash-count elems))
@@ -339,12 +356,12 @@
 ;;
 ;; dset-remove!
 ;;
-(define/ds (dset-remove! [(mdset elems del seq) ds] elem)
+(define/ds (dset-remove! [(mdset elems del _) ds] elem)
   (hash-remove! elems elem)
   (let ([del (add1 del)])
     (unsafe-set-dset-del! ds del)
     (when (too-fragmented? elems del)
-      (unsafe-set-dset-seq! ds (filter (in? elems) seq)))))
+      (unsafe-set-dset-seq! ds (filter (in? elems) (unsafe-dset-seq ds))))))
 
 ;;
 ;; dset-member?
@@ -378,10 +395,10 @@
 ;;
 ;; dset-compact!
 ;;
-(define/ds (dset-compact! [(dset elems del seq) ds])
+(define/ds (dset-compact! [(dset _ del _) ds])
   (unless (zero? del)
-    (define seq* (filter (in? elems) seq))
-    (unsafe-set-dset-seq! ds seq*)
+    (define elems (unsafe-dset-elems ds))
+    (unsafe-set-dset-seq! ds (filter (in? elems) (unsafe-dset-seq ds)))
     (unsafe-set-dset-del! ds 0)))
 
 ;;
@@ -393,29 +410,29 @@
 ;;
 ;; dset->list
 ;;
-(define/ds (dset->list [(dset _ del seq) ds])
+(define/ds (dset->list [(dset _ del _) ds])
   (cond
-    [(zero? del) seq]
+    [(zero? del) (unsafe-dset-seq ds)]
     [else (dset-compact! ds)
           (dset->list ds)]))
 
 ;;
 ;; dset-map
 ;;
-(define/ds (dset-map [(dset elems del seq) ds] f)
+(define/ds (dset-map [(dset _ del _) ds] f)
   (cond
-    [(zero? del) (map f seq)]
+    [(zero? del) (map f (unsafe-dset-seq ds))]
     [else (dset-compact! ds)
           (dset-map ds f)]))
 
 ;;
 ;; dset-for-each
 ;;
-(define/ds (dset-for-each [(dset elems del seq) ds] f)
+(define/ds (dset-for-each [(dset _ del _) ds] f)
   (cond
-    [(zero? del) (for-each f seq)]
+    [(zero? del) (for-each f (unsafe-dset-seq ds))]
     [else (dset-compact! ds)
-          (dset->list ds)]))
+          (dset-for-each ds f)]))
 
 ;;
 ;; dset-first
@@ -557,6 +574,142 @@
 
 
 ;;
+;; dset-intersect
+;;
+;; ds1 : immutable-dset?
+;; ds2 : dset? or list?
+;; returns an immutable-dset?
+(define (dset-intersect ds1 ds2)
+  (unless (immutable-dset? ds1)
+    (raise-argument-error 'dset-intersect "immutable-dset?" ds1))
+  (unsafe-dset-intersect-helper 'dset-intersect ds1 ds2))
+
+
+;; unsafe-dset-intersect-helper
+;; ds1 : immutable-dset?
+;; ds2 : dset? or list?
+;; returns an immutable-dset?
+(define (unsafe-dset-intersect-helper name ds1 ds2)
+  (cond
+    [(immutable-dset? ds2)
+     (cond
+       [(< (hash-count (unsafe-dset-elems ds1))
+           (hash-count (unsafe-dset-elems ds2)))
+        (unsafe-dset-intersect ds1 ds2)]
+       [else
+        (unsafe-dset-intersect ds2 ds1)])]
+    [(mutable-dset? ds2)
+     (unsafe-dset-intersect ds1 ds2)]
+    [(list? ds2) (unsafe-dset-intersect-with-list ds1 ds2)]
+    [else (raise-argument-error name "(or/c dset? list?)" ds2)]))
+
+
+;; unsafe-dset-intersect
+;; ds1 : immutable-dset?
+;; ds2 : dset?
+;; (if both are immutable we favor the smaller one for
+;;  ds1 to perform less work!)
+(define (unsafe-dset-intersect ds1 ds2)
+  (define seq (unsafe-dset-seq ds1))
+  (define other-elems (unsafe-dset-elems ds2))
+  (define new-elems
+    (for/fold ([elems (unsafe-dset-elems ds1)])
+              ([elem (in-list seq)])
+      (if (hash-ref other-elems elem #f)
+          elems
+          (hash-remove elems elem))))
+  (immutable-dset new-elems 0 (filter (in? new-elems) seq)))
+
+;; unsafe-dset-intersect-with-list
+;; ds : immutable-dset?
+;; l : list?
+(define (unsafe-dset-intersect-with-list ds l)
+  (define elems (unsafe-dset-elems ds))
+  (define new-elems
+    (for/hash ([elem (in-list l)]
+               #:when (hash-ref elems elem #f))
+      (values elem #t)))
+  (immutable-dset new-elems 0 (filter (in? new-elems) (unsafe-dset-seq ds))))
+
+
+;;
+;; dset-intersect*
+;;
+;; ds : immutable-dset?
+;; ds : (listof dset? or list?)
+;; returns an immutable-dset?
+(define (dset-intersect* ds . dss)
+  (unless (immutable-dset? ds)
+    (raise-argument-error 'dset-intersect* "immutable-dset?" ds))
+  (for/fold ([ds ds])
+            ([other (in-list dss)])
+    (unsafe-dset-intersect-helper 'dset-intersect* ds other)))
+
+
+
+;;
+;; dset-intersect!
+;;
+;; ds1 : mutable-dset?
+;; ds2 : dset? or list?
+;; returns an immutable-dset?
+(define (dset-intersect! ds1 ds2)
+  (unless (mutable-dset? ds1)
+    (raise-argument-error 'dset-intersect! "mutable-dset?" ds1))
+  (unsafe-dset-intersect!-helper 'dset-intersect! ds1 ds2))
+
+;; unsafe-dset-intersect!-helper
+;; ds1 : mutable-dset?
+;; ds2 : dset? or list?
+;; returns void
+(define (unsafe-dset-intersect!-helper name ds1 ds2)
+  (cond
+    [(dset? ds2)
+     (unsafe-dset-intersect! ds1 ds2)]
+    [(list? ds2) (unsafe-dset-intersect!-with-list ds1 ds2)]
+    [else (raise-argument-error name "(or/c dset? list?)" ds2)]))
+
+;; unsafe-dset-intersect!
+;; ds1 : mutable-dset?
+;; ds2 : dset?
+;; returns void
+(define (unsafe-dset-intersect! ds1 ds2)
+  (define seq (unsafe-dset-seq ds1))
+  (define elems (unsafe-dset-elems ds1))
+  (define other-elems (unsafe-dset-elems ds2))
+  (for ([elem (in-list seq)])
+    (unless (hash-ref other-elems elem #f)
+      (hash-remove! elems elem)))
+  (unsafe-set-dset-del! ds1 0)
+  (unsafe-set-dset-seq! ds1 (filter (in? elems) seq)))
+
+;; unsafe-dset-intersect!-with-list
+;; ds1 : mutable-dset?
+;; l : list
+(define (unsafe-dset-intersect!-with-list ds l)
+  (define seq (unsafe-dset-seq ds))
+  (define elems (unsafe-dset-elems ds))
+  (define other-elems (for/hash ([elem (in-list l)])
+                        (values elem #t)))
+  (for ([elem (in-list seq)])
+    (unless (hash-ref other-elems elem #f)
+      (hash-remove! elems elem)))
+  (unsafe-set-dset-del! ds 0)
+  (unsafe-set-dset-seq! ds (filter (in? elems) seq)))
+
+;;
+;; dset-intersect*!
+;;
+;; ds1 : mutable-dset?
+;; dss : (listof dset? or list?)
+;; returns void
+(define (dset-intersect*! ds dss)
+  (unless (mutable-dset? ds)
+    (raise-argument-error 'dset-intersect*! "mutable-dset?" ds))
+  (for ([other (in-list dss)])
+    (unsafe-dset-intersect!-helper 'dset-intersect*! ds other)))
+
+;;
 ;; next-valid-pos
 ;;
 (define-syntax-rule (next-valid-pos elems seq)
@@ -603,3 +756,71 @@
            #t
            ;; (loop-arg ...)
            (rst))]])))
+
+
+
+
+
+(define-syntax-rule (define-for-immutable-dset for-name for/derived empty-hash)
+  (define-syntax (for-name stx)
+    (syntax-case stx ()
+      [(_ clauses . defs+exprs)
+       (with-syntax ([original stx])
+         (syntax/loc stx
+           (let-values
+               ([(elems seq _)
+                 (for/derived original
+                   ([elems empty-hash]
+                    [seq '()]
+                    [count 0])
+                   clauses
+                   (let* ([elem (let () . defs+exprs)]
+                          [elems (hash-set elems elem #t)])
+                     (if (eqv? (hash-count elems) count)
+                         (values elems seq count)
+                         (values elems (cons elem seq) (add1 count)))))])
+             (immutable-dset elems 0 seq))))])))
+
+
+
+(define-for-immutable-dset for/dset for/fold/derived #hash())
+(define-for-immutable-dset for/dseteqv for/fold/derived #hasheqv())
+(define-for-immutable-dset for/dseteq for/fold/derived #hasheq())
+(define-for-immutable-dset for*/dset for*/fold/derived #hash())
+(define-for-immutable-dset for*/dseteqv for*/fold/derived #hasheqv())
+(define-for-immutable-dset for*/dseteq for*/fold/derived #hasheq())
+
+
+
+(define-syntax-rule (define-for-mutable-dset for-name for/derived make-empty-hash)
+  (define-syntax (for-name stx)
+    (syntax-case stx ()
+      [(_ clauses . defs+exprs)
+       (with-syntax ([original stx])
+         (syntax/loc stx
+           (let*-values
+               ([(elems) (make-empty-hash)]
+                [(seq _)
+                 (for/derived original
+                   ([seq '()]
+                    [count 0])
+                   clauses
+                   (let ([elem (let () . defs+exprs)])
+                     (hash-set! elems elem #t)
+                     (if (eqv? (hash-count elems) count)
+                         (values seq count)
+                         (values (cons elem seq) (add1 count)))))])
+             (mutable-dset elems 0 seq))))])))
+
+
+
+(define-for-mutable-dset for/mutable-dset for/fold/derived make-hash)
+(define-for-mutable-dset for/mutable-dseteqv for/fold/derived make-hasheqv)
+(define-for-mutable-dset for/mutable-dseteq for/fold/derived make-hasheq)
+(define-for-mutable-dset for*/mutable-dset for*/fold/derived make-hash)
+(define-for-mutable-dset for*/mutable-dseteqv for*/fold/derived make-hasheqv)
+(define-for-mutable-dset for*/mutable-dseteq for*/fold/derived make-hasheq)
+
+
+
+
