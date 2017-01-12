@@ -33,13 +33,11 @@
          dset-count
          dset->list
          dset-union
-         dset-union*
          dset-union!
-         dset-union*!
          dset-intersect
-         dset-intersect*
          dset-intersect!
-         dset-intersect*!
+         dset-subtract
+         dset-subtract!
          dset-map
          dset-for-each
          in-dset
@@ -437,7 +435,7 @@
 ;;
 ;; dset-first
 ;;
-(define/ds (dset-first [(dset elems del seq) ds])
+(define/ds (dset-first [(dset _ del seq) ds])
   (cond
     [(zero? del)
      (cond
@@ -462,35 +460,29 @@
 ;;
 ;; dset-union
 ;;
-;; ds1 : immutable-dset?
-;; ds2 : dset? or list?
-;; returns an immutable-dset?
-(define (dset-union ds1 ds2)
-  (unless (immutable-dset? ds1)
-    (raise-argument-error 'dset-union "immutable-dset?" ds1))
-  (unsafe-dset-union-helper 'dset-union ds1 ds2))
-
-
-;; unsafe-dset-union-helper
-;; ds1 : immutable-dset?
-;; ds2 : dset? or list?
-;; returns an immutable-dset?
-(define (unsafe-dset-union-helper name ds1 ds2)
-  (cond
-    [(immutable-dset? ds2)
-     (cond
-       [(> (hash-count (unsafe-dset-elems ds1))
-           (hash-count (unsafe-dset-elems ds2)))
-        (dset-compact! ds2)
-        (unsafe-dset-union-add-list ds1 (unsafe-dset-seq ds2))]
-       [else
-        (dset-compact! ds1)
-        (unsafe-dset-union-add-list ds2 (unsafe-dset-seq ds1))])]
-    [(mutable-dset? ds2)
-     (dset-compact! ds2)
-     (unsafe-dset-union-add-list ds1 (unsafe-dset-seq ds1))]
-    [(list? ds2) (unsafe-dset-union-add-list ds1 ds2)]
-    [else (raise-argument-error name "(or/c dset? list?)" ds2)]))
+;; ds : immutable-dset?
+;; dss : (listof (or/c dset? list?))
+(define/ds (dset-union [(idset _ _ _) ds1] . dss)
+  (define result
+    (for/fold ([ds1 ds1])
+              ([ds2 (in-list dss)])
+      (cond
+        [(immutable-dset? ds2)
+         (cond
+           [(> (hash-count (unsafe-dset-elems ds1))
+               (hash-count (unsafe-dset-elems ds2)))
+            (dset-compact! ds2)
+            (unsafe-dset-union-add-list ds1 (unsafe-dset-seq ds2))]
+           [else
+            (dset-compact! ds1)
+            (unsafe-dset-union-add-list ds2 (unsafe-dset-seq ds1))])]
+        [(mutable-dset? ds2)
+         (dset-compact! ds2)
+         (unsafe-dset-union-add-list ds1 (unsafe-dset-seq ds1))]
+        [(list? ds2) (unsafe-dset-union-add-list ds1 ds2)]
+        [else (raise-argument-error 'dset-union "(or/c dset? list?)" ds2)])))
+  (dset-compact! result)
+  result)
 
 ;; unsafe-dset-union-add-list
 ;; dest : immutable-dset?
@@ -509,39 +501,18 @@
   (immutable-dset elems (unsafe-dset-del dest) seq))
 
 ;;
-;; dset-union*
-;;
-;; ds : immutable-dset?
-;; dss : (listof (or/c dset? list?))
-(define (dset-union* ds . dss)
-  (unless (immutable-dset? ds)
-    (raise-argument-error 'dset-union* "immutable-dset?" ds))
-  (for/fold ([ds ds])
-            ([new-ds (in-list dss)])
-    (unsafe-dset-union-helper 'dset-union* ds new-ds)))
-
-;;
 ;; dset-union!
 ;;
-;; ds1 : mutable-dset?
-;; ds2 : dset? or list?
-;; returns void?
-(define (dset-union! ds1 ds2)
-  (unless (mutable-dset? ds1)
-    (raise-argument-error 'dset-union "mutable-dset?" ds1))
-  (unsafe-dset-union!-helper 'dset-union! ds1 ds2))
-
-;; unsafe-dset-union!-helper
-;; ds1 : mutable-dset?
-;; ds2 : dset? or list?
-;; returns void?
-(define (unsafe-dset-union!-helper name ds1 ds2)
-  (cond
-    [(dset? ds2)
-     (dset-compact! ds2)
-     (unsafe-dset-union!-add-list ds1 (unsafe-dset-seq ds2))]
-    [(list? ds2) (unsafe-dset-union!-add-list ds1 ds2)]
-    [else (raise-argument-error name "(or/c dset? list?)" ds2)]))
+;; ds : mutable-dset?
+;; dss : (listof (or/c dset? list?))
+(define/ds (dset-union! [(mdset _ _ _) ds1] . dss)
+  (for ([ds2 (in-list dss)])
+    (cond
+      [(dset? ds2)
+       (dset-compact! ds2)
+       (unsafe-dset-union!-add-list ds1 (unsafe-dset-seq ds2))]
+      [(list? ds2) (unsafe-dset-union!-add-list ds1 ds2)]
+      [else (raise-argument-error 'dset-union! "(or/c dset? list?)" ds2)])))
 
 ;; unsafe-dset-union!-add-list
 ;; dest : mutable-dset?
@@ -559,49 +530,28 @@
           (values (add1 count) (cons elem seq)))))
   (unsafe-set-dset-seq! dest seq))
 
-;;
-;; dset-union*!
-;;
-;; ds : mutable-dset?
-;; dss : (listof (or/c dset? list?))
-(define (dset-union*! ds . dss)
-  (unless (mutable-dset? ds)
-    (raise-argument-error 'dset-union*! "mutable-dset?" ds))
-  (for ([new-ds (in-list dss)])
-    (unsafe-dset-union!-helper 'dset-union*! ds new-ds)))
-
-
-
 
 ;;
 ;; dset-intersect
 ;;
-;; ds1 : immutable-dset?
-;; ds2 : dset? or list?
+;; ds : immutable-dset?
+;; ds : (listof dset? or list?)
 ;; returns an immutable-dset?
-(define (dset-intersect ds1 ds2)
-  (unless (immutable-dset? ds1)
-    (raise-argument-error 'dset-intersect "immutable-dset?" ds1))
-  (unsafe-dset-intersect-helper 'dset-intersect ds1 ds2))
-
-
-;; unsafe-dset-intersect-helper
-;; ds1 : immutable-dset?
-;; ds2 : dset? or list?
-;; returns an immutable-dset?
-(define (unsafe-dset-intersect-helper name ds1 ds2)
-  (cond
-    [(immutable-dset? ds2)
-     (cond
-       [(< (hash-count (unsafe-dset-elems ds1))
-           (hash-count (unsafe-dset-elems ds2)))
-        (unsafe-dset-intersect ds1 ds2)]
-       [else
-        (unsafe-dset-intersect ds2 ds1)])]
-    [(mutable-dset? ds2)
-     (unsafe-dset-intersect ds1 ds2)]
-    [(list? ds2) (unsafe-dset-intersect-with-list ds1 ds2)]
-    [else (raise-argument-error name "(or/c dset? list?)" ds2)]))
+(define/ds (dset-intersect [(idset _ _ _) ds1] . dss)
+  (for/fold ([ds ds1])
+            ([ds2 (in-list dss)])
+    (cond
+      [(immutable-dset? ds2)
+       (cond
+         [(< (hash-count (unsafe-dset-elems ds1))
+             (hash-count (unsafe-dset-elems ds2)))
+          (unsafe-dset-intersect ds1 ds2)]
+         [else
+          (unsafe-dset-intersect ds2 ds1)])]
+      [(mutable-dset? ds2)
+       (unsafe-dset-intersect ds1 ds2)]
+      [(list? ds2) (unsafe-dset-intersect-with-list ds1 ds2)]
+      [else (raise-argument-error 'dset-intersect* "(or/c dset? list?)" ds2)])))
 
 
 ;; unsafe-dset-intersect
@@ -609,6 +559,7 @@
 ;; ds2 : dset?
 ;; (if both are immutable we favor the smaller one for
 ;;  ds1 to perform less work!)
+;; returns a immutable-dset?
 (define (unsafe-dset-intersect ds1 ds2)
   (define seq (unsafe-dset-seq ds1))
   (define other-elems (unsafe-dset-elems ds2))
@@ -633,41 +584,20 @@
 
 
 ;;
-;; dset-intersect*
-;;
-;; ds : immutable-dset?
-;; ds : (listof dset? or list?)
-;; returns an immutable-dset?
-(define (dset-intersect* ds . dss)
-  (unless (immutable-dset? ds)
-    (raise-argument-error 'dset-intersect* "immutable-dset?" ds))
-  (for/fold ([ds ds])
-            ([other (in-list dss)])
-    (unsafe-dset-intersect-helper 'dset-intersect* ds other)))
-
-
-
-;;
 ;; dset-intersect!
 ;;
 ;; ds1 : mutable-dset?
-;; ds2 : dset? or list?
-;; returns an immutable-dset?
-(define (dset-intersect! ds1 ds2)
-  (unless (mutable-dset? ds1)
-    (raise-argument-error 'dset-intersect! "mutable-dset?" ds1))
-  (unsafe-dset-intersect!-helper 'dset-intersect! ds1 ds2))
-
-;; unsafe-dset-intersect!-helper
-;; ds1 : mutable-dset?
-;; ds2 : dset? or list?
+;; dss : (listof dset? or list?)
 ;; returns void
-(define (unsafe-dset-intersect!-helper name ds1 ds2)
-  (cond
-    [(dset? ds2)
-     (unsafe-dset-intersect! ds1 ds2)]
-    [(list? ds2) (unsafe-dset-intersect!-with-list ds1 ds2)]
-    [else (raise-argument-error name "(or/c dset? list?)" ds2)]))
+(define/ds (dset-intersect! [(mdset _ _ _) ds1] dss)
+  (for ([ds2 (in-list dss)])
+    (cond
+      [(dset? ds2)
+       (unsafe-dset-intersect! ds1 ds2)]
+      [(list? ds2) (unsafe-dset-intersect!-with-list ds1 ds2)]
+      [else (raise-argument-error 'dset-intersect! "(or/c dset? list?)" ds2)])))
+
+
 
 ;; unsafe-dset-intersect!
 ;; ds1 : mutable-dset?
@@ -697,17 +627,51 @@
   (unsafe-set-dset-del! ds 0)
   (unsafe-set-dset-seq! ds (filter (in? elems) seq)))
 
+
 ;;
-;; dset-intersect*!
+;; dset-subtract
 ;;
-;; ds1 : mutable-dset?
-;; dss : (listof dset? or list?)
-;; returns void
-(define (dset-intersect*! ds dss)
-  (unless (mutable-dset? ds)
-    (raise-argument-error 'dset-intersect*! "mutable-dset?" ds))
-  (for ([other (in-list dss)])
-    (unsafe-dset-intersect!-helper 'dset-intersect*! ds other)))
+;; ds : immutable-dset?
+;; dss : (listof (or/c dset? list?))
+(define/ds (dset-subtract [(idset elems _ seq) ds1] . dss)
+  (define elems*
+    (for/fold ([elems elems])
+              ([ds2 (in-list dss)])
+      (cond
+        [(dset? ds2)
+         (unsafe-dset-subtract-list elems (unsafe-dset-seq ds2))]
+        [(list? ds2) (unsafe-dset-subtract-list elems ds2)]
+        [else (raise-argument-error 'dset-subtract "(or/c dset? list?)" ds2)])))
+  (immutable-dset elems* 0 (filter (in? elems*) seq)))
+
+;; elems : hash?
+;; l : list?
+;; returns a hash?
+(define (unsafe-dset-subtract-list elems l)
+  (for/fold ([elems elems])
+            ([elem (in-list l)])
+    (hash-remove elems elem)))
+
+;;
+;; dset-subtract!
+;;
+;; ds : mutable-dset?
+;; dss : (listof (or/c dset? list?))
+(define/ds (dset-subtract! [(mdset elems _ _) ds1] . dss)
+  (for ([ds2 (in-list dss)])
+    (cond
+      [(dset? ds2)
+       (unsafe-dset-subtract!-list elems (unsafe-dset-seq ds2))]
+      [(list? ds2) (unsafe-dset-subtract!-list elems ds2)]
+      [else (raise-argument-error 'dset-subtract! "(or/c dset? list?)" ds2)]))
+  (dset-compact! ds1))
+
+;; elems : hash?
+;; l : list?
+;; returns void?
+(define (unsafe-dset-subtract!-list elems l)
+  (for ([elem (in-list l)])
+    (hash-remove! elems elem)))
 
 ;;
 ;; next-valid-pos
