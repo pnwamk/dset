@@ -1,4 +1,5 @@
-#lang info
+#lang setup/infotab
+(define version "0.1")
+(define collection 'multi)
 (define deps '("base"))
-(define pkg-desc "DSet: Deterministic Sets")
-(define pkg-authors '(pnwamk))
+(define build-deps '("racket-doc" "scribble-lib"))
