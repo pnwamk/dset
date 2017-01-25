@@ -44,7 +44,7 @@ over the elements.
  (define ds (dset 0 1 2))
  ds
  "Note the ordering is LIFO w.r.t. insertion order"
- (set->list (dset-add ds 42))
+ (set->list (set-add ds 42))
  
  (define mds (for/mutable-dset ([n (in-list '(null eins zwei drei))])
                n))
