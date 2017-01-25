@@ -154,6 +154,11 @@
   (check-equal? (set->list (set-remove s 3))
                 '(2 1))
 
+  (check-true (dset-compact? s))
+  (check-false (dset-compact? (set-remove s 1)))
+  (check-true (dset-compact? (set-remove (set-remove s 1) 2)))
+  (check-true (dset-compact? (dset-compact (set-remove s 1))))
+  
   (check-true (subset? (dset 1 3) s))
   (check-true (subset? (dset 1 2 3) s))
   (check-false (subset? (dset 1 4) s))
@@ -175,6 +180,8 @@
 
   (check-equal? (set-intersect s) s)
   (check-equal? (set-intersect s (dset 5 4 3 6)) (dset 3))
+  (check-false (dset-compact? (set-intersect s (dset 1 2))))
+  (check-true (dset-compact? (set-intersect s (dset 5 4 3 6))))
   (check-equal? (set-intersect (dset 5 4 3 6) s) (dset 3))
   (check-equal? (set-intersect (dseteq 5 4 3 6) (dseteq 1 2 3)) (dseteq 3))
   (check-equal? (set-intersect (dseteqv 5 4 3 6) (dseteqv 1 2 3)) (dseteqv 3))
@@ -189,6 +196,8 @@
   (check-equal? (set-subtract s s) (dset))
   (check-equal? (set-subtract s (dset 100)) s)
   (check-equal? (set-subtract s (dset 2 100)) (dset 1 3))
+  (check-false  (dset-compact? (set-subtract s (dset 2 100))))
+  (check-true   (dset-compact? (set-subtract s (dset 1 2 100))))
   (check-equal? (set-subtract (dseteq 2 100) (dseteq 1 2 3)) (dseteq 100))
   (check-equal? (set-subtract (dseteq 2 100 1000 9) (dseteq 1 2 3) (dseteq 1000 5)) (dseteq 9 100))
   (check-equal? (set->list (set-subtract s (dset 2 100)))
@@ -273,6 +282,20 @@
   (check-false (set-member? s 3))
   (check-equal? (set->list s) '(2 1))
 
+
+  (set! s (mutable-dset 1 2 3))
+  (check-true (dset-compact? s))
+  (set-remove! s 1)
+  (check-false (dset-compact? s))
+  (set-remove! s 2)
+  (check-true (dset-compact? s))
+  (set! s (mutable-dset 1 2 3))
+  (set-remove! s 1)
+  (dset-compact! s)
+  (check-true (dset-compact? s))
+
+
+  
   (set! s (mutable-dset 1 2 3))
 
   (check-true (subset? (mutable-dset 1 3) s))
@@ -312,8 +335,12 @@
 
   (set! s (mutable-dset 1 2 3))
   (set-intersect! s (mutable-dset 5 4 3 6 2))
+  (check-false (dset-compact? s))
   (check-equal? s (mutable-dset 3 2))
   (check-equal? (set->list s) '(3 2))
+  (set-intersect! s (mutable-dset 2))
+  (check-true (dset-compact? s))
+  (check-equal? (set->list s) '(2))
   
 
   (set! s (mutable-dset 5 4 3 6))
@@ -352,7 +379,7 @@
 
   (set! s (mutable-dset 1 2 3))
   (set-subtract! s)
-  (check-equal?  s (mutable-dset 1 2 3))
+  (check-equal? s (mutable-dset 1 2 3))
 
   (set-subtract! s s)
   (check-equal? s (mutable-dset))
@@ -363,9 +390,14 @@
 
   (set! s (mutable-dset 1 2 3))
   (set-subtract! s (mutable-dset 2 100))
+  (check-false (dset-compact? s))
   (check-equal? s (mutable-dset 1 3))
   (check-equal? (set->list s) '(3 1))
-
+  (set-subtract! s (mutable-dset 3))
+  (check-true (dset-compact? s))
+  (check-equal? s (mutable-dset 1))
+  (check-equal? (set->list s) '(1))
+  
   (set! s (mutable-dseteq 2 100))
   (set-subtract! s (dseteq 1 2 3))
   (check-equal? s (mutable-dseteq 100))
@@ -429,6 +461,35 @@
   (check-true (let ([noset #t])
                 (for ([v (in-dset (dset))]) (set! noset #f))
                 noset)))
+
+
+
+(define (list->some-dset-tests list->ds constructor)
+  (check-equal? (list->ds '()) (constructor))
+  (check-equal? (list->ds '(1 2 3)) (constructor 1 2 3))
+  (check-equal? (set->list (list->ds '(1 2 3))) '(3 2 1))
+  (check-equal? (set->list (set-add (list->ds '(1 2 3)) 4)) '(4 3 2 1))
+  (check-equal? (set->list (set-remove (set-add (list->ds '(1 2 3)) 4) 3)) '(4 2 1)))
+
+(list->some-dset-tests list->dset dset)
+(list->some-dset-tests list->dseteqv dseteqv)
+(list->some-dset-tests list->dseteq dseteq)
+
+(define (list->some-mutable-dset-tests list->ds constructor)
+  (check-equal? (list->ds '()) (constructor))
+  (check-equal? (list->ds '(1 2 3)) (constructor 1 2 3))
+  (check-equal? (set->list (list->ds '(1 2 3))) '(3 2 1))
+  (define s (list->ds '(1 2 3)))
+  (set-add! s 4)
+  (check-equal? (set->list s) '(4 3 2 1))
+  (set! s (list->ds '(1 2 3)))
+  (set-add! s 4)
+  (set-remove! s 2)
+  (check-equal? (set->list s) '(4 3 1)))
+
+(list->some-mutable-dset-tests list->mutable-dset mutable-dset)
+(list->some-mutable-dset-tests list->mutable-dseteqv mutable-dseteqv)
+(list->some-mutable-dset-tests list->mutable-dseteq mutable-dseteq)
 
 
 ;; ----------------------------------------

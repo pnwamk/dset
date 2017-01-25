@@ -3,6 +3,7 @@
 (require racket/set
          racket/stream
          racket/generic
+         racket/contract/base
          (only-in racket/unsafe/ops
                   unsafe-struct*-ref
                   unsafe-struct*-set!
@@ -16,23 +17,29 @@
 
 
 (provide dset?
-         immutable-dset?
-         mutable-dset?
-         dset-equal?
-         dset-eqv?
-         dset-eq?
          (rename-out [dset* dset]
                      [dseteqv* dseteqv]
                      [dseteq* dseteq]
                      [mutable-dset* mutable-dset]
                      [mutable-dseteqv* mutable-dseteqv]
                      [mutable-dseteq* mutable-dseteq])
-         list->dset
-         list->dseteqv
-         list->dseteq
-         list->mutable-dset
-         list->mutable-dseteqv
-         list->mutable-dseteq
+         immutable-dset?
+         mutable-dset?
+         
+         (contract-out
+          [dset-equal? (-> dset? boolean?)]
+          [dset-eqv? (-> dset? boolean?)]
+          [dset-eq? (-> dset? boolean?)]
+          [list->dset (-> list? (and/c immutable-dset? dset-equal?))]
+          [list->dseteqv (-> list? (and/c immutable-dset? dset-eqv?))]
+          [list->dseteq (-> list? (and/c immutable-dset? dset-eq?))]
+          [list->mutable-dset (-> list? (and/c mutable-dset? dset-equal?))]
+          [list->mutable-dseteqv (-> list? (and/c mutable-dset? dset-eqv?))]
+          [list->mutable-dseteq (-> list? (and/c mutable-dset? dset-eq?))]
+          [dset-compact? (-> dset? boolean?)]
+          [dset-compact (-> dset? dset?)]
+          [dset-compact! (-> dset? void?)])
+         
          in-dset
          for/dset
          for/dseteqv
@@ -45,10 +52,7 @@
          for/mutable-dseteq
          for*/mutable-dset
          for*/mutable-dseteqv
-         for*/mutable-dseteq
-         dset-compact?
-         dset-compact
-         dset-compact!)
+         for*/mutable-dseteq)
 
 
 (define-syntax-rule (no-key-err-thunk fun-name key)
