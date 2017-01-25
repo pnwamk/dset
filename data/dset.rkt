@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require racket/set
+         racket/stream
          racket/generic
          (only-in racket/unsafe/ops
                   unsafe-struct*-ref
@@ -206,7 +207,7 @@
   [(mdset elems _ _) (hash-eq? elems)])
 
 
-(define-syntax-rule (list->some-idset mk init-hash)
+(define-syntax-rule (list->some-dset mk init-hash)
   (λ (l)
     (define-values (elems seq)
            (for/fold ([elems init-hash]
@@ -215,12 +216,12 @@
              (update-elems+seq elems seq elem)))
     (mk elems 0 seq)))
 
-(define list->dset (list->some-idset idset #hash()))
-(define list->dseteqv (list->some-idset idset #hasheqv()))
-(define list->dseteq (list->some-idset idset #hasheq()))
-(define list->mutable-dset (list->some-idset mdset #hash()))
-(define list->mutable-dseteqv (list->some-idset mdset #hasheqv()))
-(define list->mutable-dseteq (list->some-idset mdset #hasheq()))
+(define list->dset (list->some-dset idset #hash()))
+(define list->dseteqv (list->some-dset idset #hasheqv()))
+(define list->dseteq (list->some-dset idset #hasheq()))
+(define list->mutable-dset (list->some-dset mdset #hash()))
+(define list->mutable-dseteqv (list->some-dset mdset #hasheqv()))
+(define list->mutable-dseteq (list->some-dset mdset #hasheq()))
 
 
 
@@ -256,7 +257,7 @@
        (unless (try-update-mdset-content! mds elems 0 seq)
          (dset-compact! mds))))])
 
-(define-syntax-rule (assert-compatible-hashes-err name ds1 ds2 elems1 elems2)
+(define-syntax-rule (assert-compatible-hashes name ds1 ds2 elems1 elems2)
   (cond [(hash-equal? elems1)
          (unless (hash-equal? elems2) (raise-incompatible-hash-error name ds1 ds2))]
         [(hash-eqv? elems1)
@@ -266,8 +267,8 @@
 
 (define-syntax-rule (raise-incompatible-hash-error name ds1 ds2)
   (raise (make-exn:fail:contract
-          (format "name: ~a\n dset 1: ~a\n dset 2: ~a"
-                  "given dsets do not use the same key comparison:"
+          (format "~a: ~a\n dset 1: ~a\n dset 2: ~a"
+                  "given dsets do not use the same key comparison"
                   name
                   ds1
                   ds2)
@@ -318,7 +319,7 @@
            ([(ds seq) (let ([ds ds-exp])
                         (unless (dset? ds)
                           (raise-argument-error 'in-dset "dset?" ds))
-                        (values ds (dset-elems ds)))])
+                        (values ds (dset-seq ds)))])
            ;; outer-check
            #t
            ;; ([loop-id loop-expr] ...)
@@ -342,10 +343,11 @@
       [blah (raise-syntax-error 'in-dset "invalid usage" #'blah)])))
 
 
+
 (define-syntax-rule (define-for-dset for-name for/derived mk empty-hash)
   (define-syntax (for-name stx)
     (syntax-case stx ()
-      [(_ clauses . defs+exprs)
+      [(form clauses body (... ...) tail-expr)
        (with-syntax ([original stx])
          (syntax/loc stx
            (let-values
@@ -354,8 +356,8 @@
                    ([elems empty-hash]
                     [seq '()])
                    clauses
-                   (let ([elem (let () . defs+exprs)])
-                     (update-elems+seq elems seq elem)))])
+                   body (... ...)
+                   (update-elems+seq elems seq tail-expr))])
              (mk elems 0 seq))))])))
 
 
@@ -407,10 +409,10 @@
 
 (define-syntax-rule (raise-incompatible-sets-error name set1 set2)
   (raise (make-exn:fail:contract
-          (format "~a: set arguments have incompatible equivalence predicate\n~a~a"
-                  'set-intersect
-                  (format "  first set: ~a\n" set1)
-                  (format "  incompatible set: ~a\n" set2))
+          (format "~a: set arguments are not of the same kind\n  ~a  ~a"
+                  name
+                  (format "first set: ~a\n" set1)
+                  (format "incompatible set: ~a" set2))
           (current-continuation-marks))))
 
 (define (dset-elems ds)
@@ -418,6 +420,12 @@
     [(immutable-dset? ds) (unsafe-immutable-dset-elems ds)]
     [(mutable-dset? ds) (unsafe-mutable-dset-elems ds)]
     [else (error 'dset-elems "impossible! you found a bug!")]))
+
+(define (dset-seq ds)
+  (cond
+    [(immutable-dset? ds) (unsafe-immutable-dset-seq ds)]
+    [(mutable-dset? ds) (unsafe-mutable-dset-seq ds)]
+    [else (error 'dset-seq "impossible! you found a bug!")]))
 
 ;; 
 ;; idset=?
@@ -466,6 +474,23 @@
    (define hash2-proc idset-hash-code)]
   #:methods gen:custom-write
   [(define write-proc idset-print)]
+  #:methods gen:stream
+  [(define/ds-match (stream-empty? ds)
+     [(idset elems _ _) (zero? (hash-count elems))])
+   ;; stream-first
+   (define/ds-match (stream-first ds)
+     [(idset elems _ seq)
+      (define-values (elem rst) (next-elem ds seq))
+      (unless rst
+        (raise-argument-error 'stream-first "(and/c stream? (not/c stream-empty?))" ds))
+      elem])
+   ;; stream-rest
+   (define/ds-match (stream-rest ds)
+     [(idset elems del seq)
+      (define-values (elem rst) (next-elem ds seq))
+      (unless rst
+        (raise-argument-error 'stream-first "(and/c stream? (not/c stream-empty?))" ds))
+      (idset (hash-remove elems elem) del rst)])]
   #:methods gen:set
   [;; set-member?
    (define/ds-match (set-member? ds elem)
@@ -487,7 +512,7 @@
      [(idset elems _ _) (hash-empty? elems)])
    ;; set-count
    (define/ds-match (set-count ds)
-     [(idset elems _ _) (hash-empty? elems)])
+     [(idset elems _ _) (hash-count elems)])
    ;; set-first
    (define/ds-match (set-first ds)
      [(idset elems _ seq)
@@ -513,15 +538,18 @@
                               "immutable-dset?"
                               ds2))
       (define elems2 (immutable-dset-elems ds2))
-      (assert-compatible-hashes-err 'subset? ds1 ds2 elems1 elems2)
+      (assert-compatible-hashes 'subset? ds1 ds2 elems1 elems2)
       (hash-keys-subset? elems1 elems2)])
+   ;; set-clear
    (define/ds-match (set-clear ds)
      [(idset elems _ _) (idset (hash-clear elems) 0 '())])
    ;; set-union
    (define/ds-match (set-union ds . sets)
      [(idset elems del seq)
       (for ([set (in-list sets)])
-        (unless (dset? set) (raise-incompatible-sets-error 'set-union ds set)))
+        (unless (dset? set)
+          (raise-incompatible-sets-error 'set-union ds set))
+        (assert-compatible-hashes 'set-union ds set elems (dset-elems set)))
       (let-values ([(elems del seq)
                     (for*/fold ([elems elems]
                                 [del del]
@@ -540,15 +568,15 @@
    (define/ds-match (set-intersect ds . sets)
      [(idset elems del seq)
       (for ([set (in-list sets)])
-        (unless (dset? set) (raise-incompatible-sets-error 'set-intersect ds set)))
+        (unless (dset? set) (raise-incompatible-sets-error 'set-intersect ds set))
+        (assert-compatible-hashes 'set-intersect ds set elems (dset-elems set)))
       (let-values ([(elems del)
                     (for/fold ([elems elems]
                                [del del])
-                              ([elem (in-dset ds)])
-                      (if (for/and ([ds (in-list sets)])
-                            (hash-ref (dset-elems ds) elem #f))
-                          (values elems del)
-                          (values (hash-remove elems elem) (add1 del))))])
+                              ([elem (in-dset ds)]
+                               #:unless (for/and ([set (in-list sets)])
+                                          (hash-has-key? (dset-elems set) elem)))
+                      (values (hash-remove elems elem) (add1 del)))])
         (if (too-fragmented? elems del)
             (idset elems 0 (filter-seq elems seq))
             (idset elems del seq)))])
@@ -556,7 +584,8 @@
    (define/ds-match (set-subtract ds . sets)
      [(idset elems del seq)
       (for ([set (in-list sets)])
-        (unless (dset? set) (raise-incompatible-sets-error 'set-subtract ds set)))
+        (unless (dset? set) (raise-incompatible-sets-error 'set-subtract ds set))
+        (assert-compatible-hashes 'set-subtract ds set elems (dset-elems set)))
       (let-values ([(elems del)
                     (for*/fold ([elems elems]
                                 [del del])
@@ -579,6 +608,13 @@
                (hash-keys-subset? ds2 ds1)))])
    ;; set->list
    (define/ds-match (set->list ds)
+     [(idset elems _ seq)
+      (for*/list ([elemb (in-list seq)]
+                  [elem (in-value (unbox-elem elemb))]
+                  #:when (hash-ref elems elem #f))
+        elem)])
+   ;; set->stream
+   (define/ds-match (set->stream ds)
      [(idset elems _ seq)
       (for*/list ([elemb (in-list seq)]
                   [elem (in-value (unbox-elem elemb))]
@@ -678,25 +714,29 @@
              (set-remove! mds elem))]))])
    ;; set-union!
    (define/ds-match (set-union! mds . sets)
-     [(mdset _ _ _)
+     [(mdset elems _ _)
       (for ([set (in-list sets)])
-        (unless (dset? set) (raise-incompatible-sets-error 'set-union! mds set))
+        (unless (dset? set)
+          (raise-incompatible-sets-error 'set-union! mds set))
+        (assert-compatible-hashes 'set-union! mds set elems (dset-elems set))
         (for ([elem (in-dset set)])
           (set-add! mds elem)))])
    ;; set-intersect!
    (define/ds-match (set-intersect! mds . sets)
-     [(mdset _ _ _)
+     [(mdset elems _ _)
       (for ([set (in-list sets)])
-        (unless (dset? set) (raise-incompatible-sets-error 'set-intersect! mds set)))
+        (unless (dset? set) (raise-incompatible-sets-error 'set-intersect! mds set))
+        (assert-compatible-hashes 'set-intersect! mds set elems (dset-elems set)))
       (for ([elem (in-dset mds)])
         (unless (for/and ([ds (in-list sets)])
                   (hash-ref (dset-elems ds) elem #f))
           (set-remove! mds elem)))])
    ;; set-subtract!
    (define/ds-match (set-subtract! mds . sets)
-     [(mdset _ _ _)
+     [(mdset elems _ _)
       (for ([set (in-list sets)])
         (unless (dset? set) (raise-incompatible-sets-error 'set-subtract! mds set))
+        (assert-compatible-hashes 'set-subtract! mds set elems (dset-elems set))
         (for ([elem (in-dset set)])
           (set-remove! mds elem)))])
    ;; subset?
@@ -704,18 +744,21 @@
      [(mdset elems1 _ _)
       (unless (dset? ds2) (raise-incompatible-sets-error 'subset? ds1 ds2))
       (define elems2 (dset-elems ds2))
-      (assert-compatible-hashes-err 'subset? ds1 ds2 elems1 elems2)
+      (assert-compatible-hashes 'subset? ds1 ds2 elems1 elems2)
       (hash-keys-subset? elems1 elems2)])
    ;; set-clear!
    (define/ds-match (set-clear! mds)
      [(mdset elems _ _)
-      (fore-update-mdset-content! mds (hash-clear elems) 0 '())])
+      (force-update-mdset-content! mds (hash-clear elems) 0 '())])
    ;; set-copy-clear
    (define/ds-match (set-copy-clear mds)
      [(mdset elems _ _) (mdset (hash-clear elems) 0 '())])
    ;; set-count
    (define/ds-match (set-count ds)
      [(mdset elems _ _) (hash-count elems)])
+   ;; set-empty?
+   (define/ds-match (set-empty? ds)
+     [(mdset elems _ _) (hash-empty? elems)])
    ;; set-first
    (define/ds-match (set-first ds)
      [(mdset elems del seq)
@@ -730,8 +773,13 @@
                   [elem (in-value (unbox-elem elemb))]
                   #:when (hash-ref elems elem #f))
         elem)])
-   ;; in-set
-   (define in-set in-dset)
+   ;; set->stream
+   (define/ds-match (set->stream ds)
+     [(mdset elems _ seq)
+      (for*/list ([elemb (in-list seq)]
+                  [elem (in-value (unbox-elem elemb))]
+                  #:when (hash-ref elems elem #f))
+        elem)])
    ;; set-map
    (define/ds-match (set-map ds f)
      [(mdset _ _ seq)
@@ -745,7 +793,9 @@
       (for* ([elemb (in-list seq)]
              [elem (in-value (unbox-elem elemb))]
              #:when (hash-ref (unsafe-mutable-dset-elems ds) elem #f))
-        (f elem))])])
+        (f elem))])
+   ;; in-set
+   (define in-set in-dset)])
 
 (define (unsafe-mutable-dset-elems mdd)
   (unsafe-vector*-ref (unsafe-unbox* (unsafe-struct*-ref mdd 0)) 0))
@@ -772,7 +822,7 @@
          [new-content (content elems del seq)])
     (unsafe-box*-cas! content-box orig-content new-content)))
 
-(define (fore-update-mdset-content! mdd elems del seq)
+(define (force-update-mdset-content! mdd elems del seq)
   (define content-box (mutable-dset-content-box mdd))
   (unsafe-set-box*! content-box (content elems del seq)))
 
@@ -780,4 +830,3 @@
 (define empty-dset (idset #hash() 0 '()))
 (define empty-dseteqv (idset #hasheqv() 0 '()))
 (define empty-dseteq (idset #hasheq() 0 '()))
-
