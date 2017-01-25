@@ -547,3 +547,57 @@
               '(3 2 1))
 
 
+
+;; tests w/ concurrent threads operating on the
+;; same mutable-ddict
+(let*-values
+    ([(N) 1000000]
+     [(mds) (mutable-dset)]
+     [(l1 l2 l3 l4)
+      (for/lists (l1 l2 l3 l4)
+        ([n (in-range 0 N 4)])
+        (values n (+ 1 n) (+ 2 n) (+ 3 n)))])
+  ;; concurrent ddict-set!, ddict-ref!,
+  ;;  ddict-update!, and ddict-remove!
+  (define t1 (thread (λ () (for ([n (in-list l1)])
+                             (set-add! mds n)))))
+  (define t2 (thread (λ () (for ([n (in-list l2)])
+                             (set-union! mds (dset n))))))
+  (define t3 (thread (λ () (for ([n (in-list l3)])
+                             (set-add! mds n)))))
+  (define t4 (thread (λ () (let loop ([l4 l4])
+                             (when (pair? l4)
+                               (let ([x (car l4)]
+                                     [xs (cdr l4)])
+                                 (cond
+                                   [(pair? xs)
+                                    (define y (car xs))
+                                    (define ys (cdr xs))
+                                    (set-union! mds (dset x y))
+                                    (loop ys)]
+                                   [else (set-add! mds x)])))))))
+  (thread-wait t1)
+  (thread-wait t2)
+  (thread-wait t3)
+  (thread-wait t4)
+  (check-equal? (set-count mds) N)
+  (check-true (for/and ([n (in-range N)])
+                (set-member? mds n)))
+  ;; concurrent ddict-remove!
+  (set! t1 (thread (λ () (for ([n (in-list l1)])
+                           (set-remove! mds n)))))
+  (set! t2 (thread (λ () (for ([n (in-list l2)])
+                           (set-remove! mds n)))))
+  (set! t3 (thread (λ () (for ([n (in-list l3)])
+                           (set-remove! mds n)))))
+  (set! t4 (thread (λ () (for ([n (in-list l4)])
+                           (set-remove! mds n)))))
+  (thread-wait t1)
+  (thread-wait t2)
+  (thread-wait t3)
+  (thread-wait t4)
+  (check-equal? (set-count mds) 0)
+  (check-true (set-empty? mds))
+  (check-equal? (set->list mds) '()))
+
+
