@@ -32,11 +32,12 @@
 @defmodule[data/dset]
 
 This package defines immutable and mutable @deftech{
- deterministic sets} (or @deftech{dset}s, for
-short). A @tech{dset} is a
+ deterministic sets} (or @deftech{dset}s, for short). A
+@tech{dset} is a
 @tech[#:doc '(lib "scribblings/reference/reference.scrbl")]{
- generic set} that guarantees LIFO ordering when iterating
-over the elements.
+ set} (i.e. it implements the generic interface
+@racket[gen:set]) that guarantees LIFO ordering when
+iterating over the elements.
 
 
 @examples[
