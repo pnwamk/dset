@@ -4,7 +4,8 @@
           scribble/example
           (for-label racket/base
                      racket/contract
-                     data/dset))
+                     data/dset
+                     racket/set))
 
 @title{Simple, Deterministic Sets}
 @author{@(author+email "Andrew Kent" "andmkent@iu.edu")}
@@ -23,7 +24,8 @@
 
 
 @(define the-eval (make-base-eval))
-@(the-eval '(require data/dset))
+@(the-eval '(require racket/set
+                     data/dset))
 
 
 
