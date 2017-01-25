@@ -54,7 +54,8 @@ over the elements.
  (set-remove! mds 'eins)
  (set-remove! mds 'drei)
  (in-set mds)
- (for ([elem (in-dset mds)])
+ (for ([elem (in-dset mds)]
+       [n (in-naturals)])
    (printf "element ~a: ~a\n" n elem))
  ]
 
